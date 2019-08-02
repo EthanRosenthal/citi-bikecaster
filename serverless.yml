@@ -1,0 +1,89 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: citi-bikecaster # NOTE: update this with your service name
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.6
+  # you can overwrite defaults here
+  stage: prod
+  region: us-east-1
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+        - "athena:*"
+        - "glue:*"
+      Resource: "*"
+
+
+plugins:
+  - serverless-python-requirements
+
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  etl:
+    handler: etl.handler
+    events:
+      # Run every two minutes
+      - schedule: cron(0/2 * * * ? *)
+  station_info:
+    handler: station_info.handler
+    events:
+      # Run every Sunday at 0 UTC
+      - schedule: cron(0 0 ? * SUN *)
+  add_partitions:
+    handler: etl.add_partitions
+    events:
+      # Run every day at 0 UTC
+      - schedule: cron(0 0 * * ? *)
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    NewResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: insulator-citi-bikecaster
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    useDownloadCache: true
+    useStaticCache: true
+    dockerExtraFiles:
+      - "_cffi_backend.cpython-36m-x86_64-linux-gnu.s"
+      - "_snappy.cpython-36m-x86_64-linux-gnu.so"
+      - "libsnappy.so"
+      - "libsnappy.so.1"
+      - "libsnappy.so.1.1.3"
+      - "snappy.py"
+      - "snappy_cffi.py"
+      - "cffi/*"

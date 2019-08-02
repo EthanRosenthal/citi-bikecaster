@@ -1,0 +1,8 @@
+boto3==1.9.199
+# This version of cffi is required for the lambda-compatible snappy to work.
+cffi==1.11.4
+fastparquet==0.3.1
+pandas==0.25.0
+# python-snappy==0.5.4
+requests==2.22.0
+s3fs==0.3.1
