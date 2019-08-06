@@ -3,6 +3,7 @@ boto3==1.9.199
 cffi==1.11.4
 fastparquet==0.3.1
 pandas==0.25.0
+PyAthena[SQLAlchemy]==1.7.1
 # python-snappy==0.5.4
 requests==2.22.0
 s3fs==0.3.1

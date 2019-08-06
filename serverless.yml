@@ -22,6 +22,7 @@ service: citi-bikecaster # NOTE: update this with your service name
 provider:
   name: aws
   runtime: python3.6
+  timeout: 180
   # you can overwrite defaults here
   stage: prod
   region: us-east-1
@@ -32,6 +33,7 @@ provider:
         - "s3:*"
         - "athena:*"
         - "glue:*"
+        - "lambda:*"
       Resource: "*"
 
 
@@ -49,8 +51,8 @@ plugins:
 #    - exclude-me-dir/**
 
 functions:
-  etl:
-    handler: etl.handler
+  station_status:
+    handler: station_status.handler
     events:
       # Run every two minutes
       - schedule: cron(0/2 * * * ? *)
@@ -60,10 +62,16 @@ functions:
       # Run every Sunday at 0 UTC
       - schedule: cron(0 0 ? * SUN *)
   add_partitions:
-    handler: etl.add_partitions
+    handler: station_status.add_partitions
     events:
       # Run every day at 0 UTC
       - schedule: cron(0 0 * * ? *)
+  fan_out:
+    handler: fan_out.handler
+    memorySize: 2880
+    events:
+      # Run every 15 minutes
+      - schedule: cron(0/15 * * * ? *)
 
 # you can add CloudFormation resource templates here
 resources:
@@ -76,6 +84,7 @@ resources:
 custom:
   pythonRequirements:
     dockerizePip: true
+    dockerSsh: true
     useDownloadCache: true
     useStaticCache: true
     dockerExtraFiles:
