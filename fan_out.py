@@ -111,11 +111,6 @@ def load_data_cache():
 def call_forecasters(station_ids):
     client = boto3.client("lambda")
     for station_id in station_ids:
-        # TODO: Remove this
-        ####
-        if station_id not in (453,):
-            continue
-        ####
         client.invoke(
             FunctionName="citi-bikecaster-model-prod-forecast",
             Payload=json.dumps({"station_id": station_id}),
