@@ -1,5 +1,6 @@
 from io import StringIO
 import json
+from urllib import request
 from urllib.parse import quote_plus
 
 import boto3
@@ -131,4 +132,6 @@ def handler(event, context):
     bucket.copy(copy_source, CACHE_KEY)
 
     df = load_data_cache()
-    call_forecasters(df["station_id"].unique().tolist())
+    url = "http://54.196.252.46"
+    request.urlopen(request.Request("http://54.196.252.46", data="".encode("utf-8")), timeout=600)
+    # call_forecasters(df["station_id"].unique().tolist())
