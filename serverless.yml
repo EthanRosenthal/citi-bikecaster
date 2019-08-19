@@ -68,7 +68,7 @@ functions:
       - schedule: cron(0 0 * * ? *)
   fan_out:
     handler: fan_out.handler
-    memorySize: 2880
+    memorySize: 1536
     events:
       # Run every 15 minutes
       - schedule: cron(0/15 * * * ? *)
