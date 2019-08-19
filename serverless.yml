@@ -72,6 +72,13 @@ functions:
     events:
       # Run every 15 minutes
       - schedule: cron(0/15 * * * ? *)
+  file_concatenater:
+    handler: station_status.file_concatenater
+    timeout: 600
+    events:
+      # Run every day at 0:30 UTC
+      # Aggregates files from the previous day.
+      - schedule: cron(30 0 * * ? *)
 
 # you can add CloudFormation resource templates here
 resources:

@@ -7,8 +7,10 @@ import time
 import uuid
 
 import boto3
+import pandas as pd
 from pandas.io.json import json_normalize
 import requests
+import s3fs
 
 logger = logging.getLogger()
 
@@ -47,6 +49,12 @@ def s3_path(now, file_id):
     return f"s3://{BUCKET}/{s3_partition(now)}/{s3_filename(now, file_id)}"
 
 
+def trash_bin(path):
+    splits = path.split("/")
+    bucket, the_rest = splits[0], "/".join(splits[1:])
+    return f"{bucket}/trash/{the_rest}"
+
+
 def handler(event, context):
     try:
         res = requests.get(STATUS_URL).json()
@@ -56,7 +64,7 @@ def handler(event, context):
 
     station_data = json_normalize(res["data"]["stations"])
     station_data = station_data[SAVE_KEYS]
-    now = dt.now()
+    now = dt.utcnow()
     file_id = str(uuid.uuid4())
     station_data.to_parquet(
         s3_path(now, file_id), engine="fastparquet", compression="snappy"
@@ -94,7 +102,7 @@ def poll_query_success(client, execution_id, max_polls=120):
 
 
 def add_partitions(event, context):
-    today = dt.combine(dt.now().date(), dt.min.time())
+    today = dt.combine(dt.utcnow().date(), dt.min.time())
     tomorrow = today + timedelta(days=1)
     hour_partitions = [tomorrow + timedelta(hours=hour) for hour in range(0, 24)]
 
@@ -144,6 +152,42 @@ def add_partitions(event, context):
     response = {"statusCode": status_code, "body": json.dumps(body)}
 
     return response
+
+
+def read_parquets(files, s3):
+    dfs = []
+    for fi in files:
+        with s3.open(fi, "rb") as fopen:
+            dfs.append(pd.read_parquet(fopen))
+    return pd.concat(dfs)
+
+
+def file_concatenater(event, context):
+    today = dt.combine(dt.utcnow().date(), dt.min.time())
+    # Find out the partitions from yesterday
+    yesterday = today - timedelta(days=1)
+    hour_partitions = [yesterday + timedelta(hours=hour) for hour in range(0, 24)]
+    paths = [f"s3://{BUCKET}/{s3_partition(p)}/*.parquet" for p in hour_partitions]
+
+    s3 = s3fs.S3FileSystem()
+    for path, hour_partition in zip(paths, hour_partitions):
+        # For each partition, download and concat all the files
+        # in there
+        files = s3.glob(path)
+        dfs = read_parquets(files, s3)
+
+        # Write the single, concatenated file back to the partition
+        file_id = str(uuid.uuid4())
+        dfs.to_parquet(
+            s3_path(hour_partition, file_id), engine="fastparquet", compression="snappy"
+        )
+
+        # Move all of the old files into the trash bin.
+        for fi in files:
+            s3.mv(fi, trash_bin(fi))
+
+    body = {"message": "success", "input": event}
+    return {"statusCode": 200, "body": json.dumps(body)}
 
 
 if __name__ == "__main__":
