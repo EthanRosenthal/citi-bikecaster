@@ -1,0 +1,403 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  citi-bikecaster v2: poll the Citi Bike GBFS feed every 2 minutes, write
+  parquet to S3, compact daily/monthly, and expose it to Athena and DuckDB.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+  Bucket:
+    Type: String
+    Default: insulator-citi-bikecaster
+    Description: Existing bucket (owned outside this stack; never created or deleted here).
+  AthenaResultsBucket:
+    Type: String
+    Default: aws-athena-query-results-069757761977-us-east-1
+  SchedulesEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+
+Conditions:
+  Scheduled: !Equals [!Ref SchedulesEnabled, "true"]
+
+Mappings:
+  Stage:
+    prod: {Prefix: v2, Database: citibike, Name: citibike}
+    dev: {Prefix: dev/v2, Database: citibike_dev, Name: citibike-dev}
+
+Globals:
+  Function:
+    Runtime: python3.14
+    Architectures: [arm64]
+    Layers: [!Ref PyarrowLayer]
+    Timeout: 60
+    MemorySize: 512
+    Environment:
+      Variables:
+        BUCKET: !Ref Bucket
+        PREFIX: !FindInMap [Stage, !Ref Stage, Prefix]
+
+Resources:
+  PyarrowLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub
+        - "${Name}-pyarrow"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      ContentUri: build/layer/
+      CompatibleRuntimes: [python3.14]
+      CompatibleArchitectures: [arm64]
+      RetentionPolicy: Delete
+
+  # ---------------------------------------------------------------------------
+  # Functions
+  # ---------------------------------------------------------------------------
+
+  StationStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Name}-station-status"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      CodeUri: src/
+      Handler: bikecaster.ingest.station_status
+      LoggingConfig: {LogGroup: !Ref StationStatusLogs}
+      Events:
+        Every2Minutes:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0/2 * * * ? *)
+            State: !If [Scheduled, ENABLED, DISABLED]
+            RetryPolicy: {MaximumRetryAttempts: 0}
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/raw/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+  StationInfoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Name}-station-info"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      CodeUri: src/
+      Handler: bikecaster.ingest.station_info
+      LoggingConfig: {LogGroup: !Ref StationInfoLogs}
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(5 0 * * ? *)
+            State: !If [Scheduled, ENABLED, DISABLED]
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/station_info/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+  CompactDailyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Name}-compact-daily"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      CodeUri: src/
+      Handler: bikecaster.compact.daily
+      Timeout: 600
+      MemorySize: 3008
+      LoggingConfig: {LogGroup: !Ref CompactDailyLogs}
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(30 0 * * ? *)
+            State: !If [Scheduled, ENABLED, DISABLED]
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub "arn:aws:s3:::${Bucket}"
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/station_status/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+  CompactMonthlyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Name}-compact-monthly"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      CodeUri: src/
+      Handler: bikecaster.compact.monthly
+      Timeout: 900
+      MemorySize: 3008
+      EphemeralStorage: {Size: 4096}
+      LoggingConfig: {LogGroup: !Ref CompactMonthlyLogs}
+      Events:
+        Monthly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 3 2 * ? *)
+            State: !If [Scheduled, ENABLED, DISABLED]
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub "arn:aws:s3:::${Bucket}"
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/station_status/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+  # Invoked manually (scripts/backfill.py) to rebuild legacy data.
+  BackfillFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Name}-backfill"
+        - Name: !FindInMap [Stage, !Ref Stage, Name]
+      CodeUri: src/
+      Handler: bikecaster.backfill.handler
+      Timeout: 900
+      MemorySize: 10240
+      EphemeralStorage: {Size: 10240}
+      LoggingConfig: {LogGroup: !Ref BackfillLogs}
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub "arn:aws:s3:::${Bucket}"
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub "arn:aws:s3:::${Bucket}/trash/station_status/*"
+                - !Sub "arn:aws:s3:::${Bucket}/station_status/*"
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub
+                - "arn:aws:s3:::${Bucket}/${Prefix}/station_status/*"
+                - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+  StationStatusLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 30}
+  StationInfoLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 30}
+  CompactDailyLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 90}
+  CompactMonthlyLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 365}
+  BackfillLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 90}
+
+  # ---------------------------------------------------------------------------
+  # Athena / Glue. Partition projection means no partitions ever need adding.
+  # ---------------------------------------------------------------------------
+
+  Database:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !FindInMap [Stage, !Ref Stage, Database]
+        Description: Citi Bike GBFS snapshots (citi-bikecaster v2)
+
+  StationStatusTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref Database
+      TableInput:
+        Name: station_status
+        Description: Compacted station status, one file per month (daily files for the current month).
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.month.type: date
+          projection.month.format: yyyy-MM
+          projection.month.range: 2016-09,NOW
+          projection.month.interval: "1"
+          projection.month.interval.unit: MONTHS
+        PartitionKeys:
+          - {Name: month, Type: string}
+        StorageDescriptor:
+          Location: !Sub
+            - "s3://${Bucket}/${Prefix}/station_status/"
+            - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - {Name: fetched_at, Type: timestamp}
+            - {Name: feed_last_updated, Type: timestamp}
+            - {Name: station_id, Type: string}
+            - {Name: legacy_id, Type: string}
+            - {Name: num_bikes_available, Type: int}
+            - {Name: num_ebikes_available, Type: int}
+            - {Name: num_bikes_disabled, Type: int}
+            - {Name: num_docks_available, Type: int}
+            - {Name: num_docks_disabled, Type: int}
+            - {Name: is_installed, Type: boolean}
+            - {Name: is_renting, Type: boolean}
+            - {Name: is_returning, Type: boolean}
+            - {Name: last_reported, Type: timestamp}
+            - {Name: source, Type: string}
+
+  StationStatusRawTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref Database
+      TableInput:
+        Name: station_status_raw
+        Description: Raw 2-minute snapshots (kept ~14 days). Use for today's data.
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.date.type: date
+          projection.date.format: yyyy-MM-dd
+          projection.date.range: NOW-30DAYS,NOW
+          projection.date.interval: "1"
+          projection.date.interval.unit: DAYS
+        PartitionKeys:
+          - {Name: date, Type: string}
+        StorageDescriptor:
+          Location: !Sub
+            - "s3://${Bucket}/${Prefix}/raw/station_status/"
+            - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - {Name: fetched_at, Type: timestamp}
+            - {Name: feed_last_updated, Type: timestamp}
+            - {Name: station_id, Type: string}
+            - {Name: legacy_id, Type: string}
+            - {Name: num_bikes_available, Type: int}
+            - {Name: num_ebikes_available, Type: int}
+            - {Name: num_bikes_disabled, Type: int}
+            - {Name: num_docks_available, Type: int}
+            - {Name: num_docks_disabled, Type: int}
+            - {Name: is_installed, Type: boolean}
+            - {Name: is_renting, Type: boolean}
+            - {Name: is_returning, Type: boolean}
+            - {Name: last_reported, Type: timestamp}
+            - {Name: source, Type: string}
+
+  StationInfoTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref Database
+      TableInput:
+        Name: station_info
+        Description: Daily snapshot of station_information.json.
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.date.type: date
+          projection.date.format: yyyy-MM-dd
+          projection.date.range: 2026-09-01,NOW
+          projection.date.interval: "1"
+          projection.date.interval.unit: DAYS
+        PartitionKeys:
+          - {Name: date, Type: string}
+        StorageDescriptor:
+          Location: !Sub
+            - "s3://${Bucket}/${Prefix}/station_info/"
+            - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - {Name: fetched_at, Type: timestamp}
+            - {Name: feed_last_updated, Type: timestamp}
+            - {Name: station_id, Type: string}
+            - {Name: short_name, Type: string}
+            - {Name: name, Type: string}
+            - {Name: lat, Type: double}
+            - {Name: lon, Type: double}
+            - {Name: region_id, Type: string}
+            - {Name: capacity, Type: int}
+            - {Name: has_kiosk, Type: boolean}
+            - {Name: station_type, Type: string}
+
+  WorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !FindInMap [Stage, !Ref Stage, Name]
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        # Lets the dump CTAS write to its own external_location.
+        EnforceWorkGroupConfiguration: false
+        EngineVersion: {SelectedEngineVersion: Athena engine version 3}
+        ResultConfiguration:
+          OutputLocation: !Sub
+            - "s3://${AthenaResultsBucket}/${Name}/"
+            - Name: !FindInMap [Stage, !Ref Stage, Name]
+
+  # One parquet file per year under s3://<bucket>/<prefix>/dumps/<tag>/.
+  # Replace 20260101 with today's date (the table name and path must be new).
+  DumpQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: dump station_status
+      Description: Dump all station_status into one zstd parquet file per year.
+      Database: !Ref Database
+      WorkGroup: !Ref WorkGroup
+      QueryString: !Sub
+        - |
+          CREATE TABLE station_status_dump_20260101
+          WITH (
+            format = 'PARQUET',
+            write_compression = 'ZSTD',
+            external_location = 's3://${Bucket}/${Prefix}/dumps/20260101/',
+            partitioned_by = ARRAY['year'],
+            bucketed_by = ARRAY['station_id'],
+            bucket_count = 1
+          ) AS
+          SELECT
+            fetched_at, feed_last_updated, station_id, legacy_id,
+            num_bikes_available, num_ebikes_available, num_bikes_disabled,
+            num_docks_available, num_docks_disabled,
+            is_installed, is_renting, is_returning, last_reported, source,
+            substr(month, 1, 4) AS year
+          FROM station_status
+        - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+
+Outputs:
+  Prefix:
+    Value: !Sub
+      - "s3://${Bucket}/${Prefix}/"
+      - Prefix: !FindInMap [Stage, !Ref Stage, Prefix]
+  Database:
+    Value: !Ref Database
+  WorkGroup:
+    Value: !Ref WorkGroup
