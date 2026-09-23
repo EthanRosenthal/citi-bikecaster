@@ -127,7 +127,7 @@ def cmd_verify(args):
     in_table = {m: int(n) for m, n in rows}
     for month, n in sorted(per_month.items()):
         # The cutover month also holds live data, so it can only be larger.
-        if in_table.get(month, 0) < n or (in_table.get(month) != n and not args.allow_live_months):
+        if in_table.get(month, 0) < n or (in_table.get(month, 0) != n and not args.allow_live_months):
             problems.append(f"{month}: table has {in_table.get(month, 0)} rows, backfill wrote {n}")
 
     print(f"months: {len(per_month)}  rows: {sum(per_month.values()):,}  days by source: {chosen}")
