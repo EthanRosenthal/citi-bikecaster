@@ -70,6 +70,9 @@ Resources:
         Every2Minutes:
           Type: ScheduleV2
           Properties:
+            Name: !Sub
+              - "${Name}-station-status"
+              - Name: !FindInMap [Stage, !Ref Stage, Name]
             ScheduleExpression: cron(0/2 * * * ? *)
             State: !If [Scheduled, ENABLED, DISABLED]
             RetryPolicy: {MaximumRetryAttempts: 0}
@@ -94,6 +97,9 @@ Resources:
         Daily:
           Type: ScheduleV2
           Properties:
+            Name: !Sub
+              - "${Name}-station-info"
+              - Name: !FindInMap [Stage, !Ref Stage, Name]
             ScheduleExpression: cron(5 0 * * ? *)
             State: !If [Scheduled, ENABLED, DISABLED]
       Policies:
@@ -119,6 +125,9 @@ Resources:
         Daily:
           Type: ScheduleV2
           Properties:
+            Name: !Sub
+              - "${Name}-compact-daily"
+              - Name: !FindInMap [Stage, !Ref Stage, Name]
             ScheduleExpression: cron(30 0 * * ? *)
             State: !If [Scheduled, ENABLED, DISABLED]
       Policies:
@@ -153,6 +162,9 @@ Resources:
         Monthly:
           Type: ScheduleV2
           Properties:
+            Name: !Sub
+              - "${Name}-compact-monthly"
+              - Name: !FindInMap [Stage, !Ref Stage, Name]
             ScheduleExpression: cron(0 3 2 * ? *)
             State: !If [Scheduled, ENABLED, DISABLED]
       Policies:
