@@ -102,20 +102,26 @@ def cmd_run(args):
 def cmd_verify(args):
     report = Path(args.report or f"backfill-{args.stage}.jsonl")
     done = load_report(report)
-    problems, per_month, chosen, flagged = [], {}, {}, []
+    problems, per_month, chosen, flagged, dups = [], {}, {}, [], 0
     for rec in done.values():
         per_month[rec["month"]] = per_month.get(rec["month"], 0) + rec["rows"]
         for d in rec["per_day"]:
             chosen[d["chosen"]] = chosen.get(d["chosen"], 0) + 1
             if d.get("flag"):
                 flagged.append(d["day"])
+            if d["chosen"] == "legacy_raw":
+                dups += d.get("duplicates_dropped", 0)
             hourly = d.get("hourly_rows")
             if hourly is None:
                 continue
             if d["chosen"] == "legacy_hourly" and d["rows"] != hourly:
                 problems.append(f"{d['day']}: rows {d['rows']} != hourly {hourly}")
-            if d["chosen"] == "legacy_raw" and abs(d["rows"] - hourly) > TOLERANCE * hourly:
-                problems.append(f"{d['day']}: raw rows {d['rows']} vs hourly {hourly}")
+            if d["chosen"] == "legacy_raw":
+                raw = d["raw_rows"]
+                if abs(raw - hourly) > TOLERANCE * hourly:
+                    problems.append(f"{d['day']}: raw rows {raw} vs hourly {hourly}")
+                if d["rows"] != raw - d.get("duplicates_dropped", 0):
+                    problems.append(f"{d['day']}: wrote {d['rows']} rows, expected {raw} minus duplicates")
             if d["chosen"] is None and hourly:
                 problems.append(f"{d['day']}: no output but {hourly} hourly rows")
 
@@ -132,6 +138,7 @@ def cmd_verify(args):
 
     print(f"months: {len(per_month)}  rows: {sum(per_month.values()):,}  days by source: {chosen}")
     print(f"flagged days ({len(flagged)}): {sorted(flagged)}")
+    print(f"exact duplicate rows dropped: {dups:,}")
     print("\n".join(problems) or "OK: every day matches the legacy S3 row counts and the v2 table")
     sys.exit(1 if problems else 0)
 

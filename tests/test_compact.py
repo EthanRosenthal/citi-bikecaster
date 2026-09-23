@@ -106,3 +106,14 @@ def test_monthly_defaults_to_previous_month(aws, monkeypatch):
     monkeypatch.setattr(compact, "consolidate_month", seen.append)
     compact.monthly({"time": "2026-10-02T03:00:00Z"}, None)
     assert seen == [common.previous_month(datetime.now(UTC).date())]
+
+
+def test_compact_day_drops_exact_duplicates(aws, gbfs_status):
+    day = date(2026, 9, 1)
+    rows = write_raw_day(gbfs_status, day)
+    fetched = datetime(2026, 9, 1, tzinfo=UTC) + timedelta(seconds=22)
+    table = ingest.status_table(gbfs_status, fetched)
+    common.write_parquet(table, common.raw_status_key(fetched, "id0-retry"))
+    result = compact.compact_day(day)
+    assert result["rows"] == rows
+    assert_sorted(common.read_parquet(result["key"]))

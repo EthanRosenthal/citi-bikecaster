@@ -93,7 +93,11 @@ def compact_day(day: date) -> dict:
     if not keys:
         raise RuntimeError(f"No raw files found for {day}")
 
-    table = common.sort_status(pa.concat_tables(read_many(keys)).cast(common.STATUS_SCHEMA))
+    table = pa.concat_tables(read_many(keys)).cast(common.STATUS_SCHEMA)
+    total = table.num_rows
+    table = common.sort_status(common.drop_exact_duplicates(table))
+    if table.num_rows != total:
+        logger.warning("%s: dropped %d exact duplicate rows", day, total - table.num_rows)
     key = common.daily_status_key(day)
     common.write_parquet(
         table, key, compression_level=ZSTD_LEVEL, row_group_size=ROW_GROUP_SIZE

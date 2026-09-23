@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 import io
 
+import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
@@ -87,3 +88,18 @@ def test_refuses_to_overwrite_v2_month(aws):
         backfill.handler({"month": "2021-06", "days": ["2021-06-01"]}, None)
     with pytest.raises(RuntimeError, match="already in monthly"):
         backfill.handler({"month": "2021-06", "days": ["2021-06-01"], "output": "daily"}, None)
+
+
+def test_raw_drops_exact_duplicate_rows(aws):
+    rows = upload_consistent_day(aws)
+    # A snapshot where the feed listed every station twice (as in 2023-08).
+    key = "trash/station_status/2021/06/01/00/juvenai-1-2021-06-01-00-00-22-0000.parquet"
+    snap = pq.read_table(pa.BufferReader(aws.get_object(Bucket=common.BUCKET, Key=key)["Body"].read()))
+    buf = io.BytesIO()
+    pq.write_table(pa.concat_tables([snap, snap]), buf)
+    aws.put_object(Bucket=common.BUCKET, Key=key, Body=buf.getvalue())
+
+    table, info = backfill.raw_day(DAY)
+    assert info["raw_rows"] == rows + snap.num_rows
+    assert info["duplicates_dropped"] == snap.num_rows
+    assert table.num_rows == rows

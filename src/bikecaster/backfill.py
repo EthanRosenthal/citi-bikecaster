@@ -56,7 +56,15 @@ def raw_day(day: date) -> tuple[pa.Table | None, dict]:
             )
         )
     table = pa.concat_tables(kept)
-    return table, {"raw_files": len(keys), "raw_dropped": dropped, "raw_rows": table.num_rows}
+    # raw_rows is counted before de-duplication so it stays comparable with
+    # the hourly files, which contain the same duplicates.
+    deduped = common.drop_exact_duplicates(table)
+    return deduped, {
+        "raw_files": len(keys),
+        "raw_dropped": dropped,
+        "raw_rows": table.num_rows,
+        "duplicates_dropped": table.num_rows - deduped.num_rows,
+    }
 
 
 def hourly_keys(day: date) -> list[str]:

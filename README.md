@@ -30,6 +30,21 @@ the hour. Older rows use numeric `station_id`s. The feed switched to UUIDs
 sometime between mid-2021 and 2023. `legacy_id`, populated on `live` rows only,
 maps a UUID back to its numeric id.
 
+### Data quality notes
+
+- From 2023-08-05 to 2023-09-07 the feed listed most stations twice per
+  snapshot. Exact duplicate rows are dropped, 49.1M rows in total, including
+  a few short bursts in 2019–2021. About 1.5% of those pairs differ in some
+  value, and both rows are kept.
+- 2023-08-04 comes from hourly files, where duplicates can't be told apart
+  from real repeated snapshots, so it still contains the duplicated stations.
+- Seven days whose raw snapshots are incomplete fall back to hourly
+  `fetched_at`: 2019-08-01, 2019-10-05, 2020-11-25, 2021-12-07, 2023-06-13,
+  2023-08-04 and 2025-10-20.
+- Some months have gaps in the source data. 2017-07 is nearly empty and
+  2017-08 has no data.
+- `last_reported` values before 2001 are GBFS "never" sentinels and are null.
+
 ### DuckDB
 
 ```sql

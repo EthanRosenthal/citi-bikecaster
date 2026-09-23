@@ -257,6 +257,16 @@ def sort_status(table: pa.Table) -> pa.Table:
     return table.sort_by(SORT_KEYS)
 
 
+def drop_exact_duplicates(table: pa.Table) -> pa.Table:
+    """Drop rows identical in every column (the feed occasionally repeated
+    stations, e.g. 2023-08-05..2023-09-07). Only meaningful when fetched_at
+    is exact; legacy_hourly rows legitimately repeat within an hour.
+    Row order is not preserved."""
+    return table.group_by(table.column_names, use_threads=True).aggregate([]).select(
+        table.column_names
+    ).cast(table.schema)
+
+
 # ---------------------------------------------------------------------------
 # Dates
 # ---------------------------------------------------------------------------
