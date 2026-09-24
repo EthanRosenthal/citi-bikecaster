@@ -103,3 +103,17 @@ def test_raw_drops_exact_duplicate_rows(aws):
     assert info["raw_rows"] == rows + snap.num_rows
     assert info["duplicates_dropped"] == snap.num_rows
     assert table.num_rows == rows
+
+
+def test_backfill_station_info(aws):
+    path = DATA / "station_info_2019_08_01.parquet"
+    put_file(aws, path, f"station_info/2019/08/01/20/{path.name.replace('station_info_2019_08_01', 'juvenai-1-2019-08-01-20-47-34-abcd')}")
+    result = backfill.backfill_station_info()
+    assert result["written"] == 1
+    table = common.read_parquet(common.info_key(date(2019, 8, 1)))
+    assert table.schema == common.INFO_SCHEMA
+    assert table.num_rows == 846
+    assert table["region_id"][0].as_py() == "71"
+    assert table["fetched_at"][0].as_py() == datetime(2019, 8, 1, 20, 47, 34, tzinfo=UTC)
+    # Existing days are left alone.
+    assert backfill.backfill_station_info()["skipped"] == ["2019-08-01"]

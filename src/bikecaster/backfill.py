@@ -170,6 +170,35 @@ def backfill(month: str, source: str = "auto", days: list[str] | None = None,
     }
 
 
+def backfill_station_info(overwrite: bool = False) -> dict:
+    """Convert legacy station_info/YYYY/MM/DD/HH/*.parquet snapshots (weekly
+    since 2019-08) into v2 station_info/date=YYYY-MM-DD/ files. When a day has
+    several snapshots the latest wins. Days that already have a v2 file are
+    skipped unless ``overwrite``."""
+    latest: dict[date, str] = {}
+    for o in common.list_objects("station_info/"):
+        key = o["Key"]
+        if not key.endswith(".parquet"):
+            continue
+        fetched = common.fetched_at_from_legacy_name(key)
+        best = latest.get(fetched.date())
+        if best is None or common.fetched_at_from_legacy_name(best) < fetched:
+            latest[fetched.date()] = key
+    written, skipped = [], []
+    for day, key in sorted(latest.items()):
+        out = common.info_key(day)
+        if not overwrite and common.exists(out):
+            skipped.append(day.isoformat())
+            continue
+        table = common.normalize_info(
+            common.read_parquet(key), common.fetched_at_from_legacy_name(key)
+        )
+        common.write_parquet(table, out)
+        written.append(day.isoformat())
+    logger.info("station_info backfill: %d written, %d skipped", len(written), len(skipped))
+    return {"written": len(written), "skipped": skipped, "first": written[:1], "last": written[-1:]}
+
+
 def handler(event, context):
     """Event: {"month": "YYYY-MM", "source": "auto", "days": [...], "output": "monthly", "dry_run": false}"""
     return backfill(

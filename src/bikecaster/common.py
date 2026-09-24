@@ -253,6 +253,24 @@ def normalize_status(
     return pa.table(cols, schema=STATUS_SCHEMA)
 
 
+def normalize_info(table: pa.Table, fetched_at: datetime) -> pa.Table:
+    """Coerce a legacy (2019-08..2026-09) station_info file into INFO_SCHEMA."""
+    n = table.num_rows
+    cols = {}
+    for field in INFO_SCHEMA:
+        name = field.name
+        if name == "fetched_at":
+            col = pa.array([fetched_at] * n, TS)
+        elif name == "feed_last_updated" and "last_updated" in table.column_names:
+            col = epoch_to_ts(table["last_updated"])
+        elif name in table.column_names:
+            col = table[name]
+        else:
+            col = pa.nulls(n, field.type)
+        cols[name] = col.cast(field.type)
+    return pa.table(cols, schema=INFO_SCHEMA)
+
+
 def sort_status(table: pa.Table) -> pa.Table:
     return table.sort_by(SORT_KEYS)
 

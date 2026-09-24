@@ -335,7 +335,7 @@ Resources:
           projection.enabled: "true"
           projection.date.type: date
           projection.date.format: yyyy-MM-dd
-          projection.date.range: 2026-09-01,NOW
+          projection.date.range: 2019-08-01,NOW
           projection.date.interval: "1"
           projection.date.interval.unit: DAYS
         PartitionKeys:

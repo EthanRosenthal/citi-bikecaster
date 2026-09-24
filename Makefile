@@ -8,7 +8,7 @@ NAME     = $(if $(filter prod,$(STAGE)),citibike,citibike-$(STAGE))
 # Extra CloudFormation parameters, e.g. PARAMS="SchedulesEnabled=false"
 PARAMS  ?=
 
-.PHONY: test test-live layer package deploy lifecycle invoke logs clean
+.PHONY: test test-live layer package deploy lifecycle invoke logs clean duckdb
 
 test:
 	uv run pytest -m "not live"
@@ -57,3 +57,7 @@ logs:
 
 clean:
 	rm -rf build
+
+# DuckDB shell with views over the S3 data (see queries/)
+duckdb:
+	uvx --from duckdb-cli duckdb -init queries/setup.sql

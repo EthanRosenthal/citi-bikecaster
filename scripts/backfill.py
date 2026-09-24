@@ -10,6 +10,8 @@ the next run.
         --days 2026-09-01:2026-09-23
     # compare the report against the legacy S3 row counts and the v2 table
     uv run scripts/backfill.py verify --stage prod
+    # legacy weekly station_info snapshots (runs locally)
+    uv run scripts/backfill.py station-info --stage prod
 """
 
 import argparse
@@ -143,6 +145,17 @@ def cmd_verify(args):
     sys.exit(1 if problems else 0)
 
 
+def cmd_station_info(args):
+    """Runs locally (small: a few hundred files) with your AWS credentials."""
+    import os
+
+    os.environ["PREFIX"] = "v2" if args.stage == "prod" else f"{args.stage}/v2"
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from bikecaster import backfill
+
+    print(json.dumps(backfill.backfill_station_info(), default=str))
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(required=True)
@@ -163,6 +176,9 @@ def main():
     v.add_argument("--allow-live-months", action="store_true",
                    help="allow months that also contain live v2 rows to exceed the backfill count")
     v.set_defaults(func=cmd_verify)
+    si = sub.add_parser("station-info", help="convert legacy station_info snapshots")
+    si.add_argument("--stage", default="dev")
+    si.set_defaults(func=cmd_station_info)
     args = p.parse_args()
     if getattr(args, "func", None) is cmd_run and not (args.month or args.end):
         p.error("run needs --end or --month")
