@@ -26,3 +26,10 @@ var/
 .serverless
 node_modules/
 .idea/
+
+# Local build / tooling
+.venv/
+.pytest_cache/
+backfill-*.jsonl
+*.parquet
+!tests/data/*.parquet
