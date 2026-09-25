@@ -15,6 +15,7 @@ import os
 import re
 
 import boto3
+from botocore.config import Config
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -108,7 +109,8 @@ _s3 = None
 def s3():
     global _s3
     if _s3 is None:
-        _s3 = boto3.client("s3")
+        # Sized for the thread pools that read many small files at once.
+        _s3 = boto3.client("s3", config=Config(max_pool_connections=64))
     return _s3
 
 
