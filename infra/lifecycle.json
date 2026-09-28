@@ -21,6 +21,42 @@
       }
     },
     {
+      "ID": "expire-legacy-trash",
+      "Filter": {
+        "Prefix": "trash/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 1
+      }
+    },
+    {
+      "ID": "archive-legacy-station-status",
+      "Filter": {
+        "Prefix": "station_status/"
+      },
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 0,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ]
+    },
+    {
+      "ID": "archive-legacy-station-info",
+      "Filter": {
+        "Prefix": "station_info/"
+      },
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 0,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ]
+    },
+    {
       "ID": "abort-incomplete-multipart-uploads",
       "Filter": {},
       "Status": "Enabled",

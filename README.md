@@ -292,3 +292,11 @@ Athena partitions with a nightly Lambda. In September 2026 it was replaced by
 the pipeline above, and all history was converted into the new layout. The
 hourly files shrank from ~80 GB to ~9 GB, and fetch times were recovered from
 the original snapshot files where they still existed.
+
+The original files were kept after the migration. The legacy hourly
+`station_status/` files and the weekly `station_info/` snapshots are in
+Glacier Deep Archive, and they're the only original copy of the 2016–2019
+data. To read them, restore them first; a restore takes 12–48 hours. The raw
+2-minute snapshots (`trash/`) were deleted once every day had been rebuilt
+and verified. The per-day backfill reports are in
+`s3://insulator-citi-bikecaster/v2/backfill-reports/`.
