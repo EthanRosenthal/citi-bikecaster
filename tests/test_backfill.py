@@ -77,8 +77,12 @@ def test_hourly_source_uses_hour_as_fetched_at(aws):
     )
     assert result["rows"] == pq.read_metadata(path).num_rows
     table = common.read_parquet(common.daily_status_key(date(2016, 9, 20)))
-    assert table["fetched_at"].unique().to_pylist() == [datetime(2016, 9, 20, 12, tzinfo=UTC)]
+    # EC2-era hours are NYC wall time: 12:00 EDT is 16:00 UTC.
+    assert table["fetched_at"].unique().to_pylist() == [datetime(2016, 9, 20, 16, tzinfo=UTC)]
     assert table["source"].unique().to_pylist() == ["legacy_hourly"]
+    raw_lr = pq.read_table(path)["last_reported"].to_pylist()
+    got_lr = [None if v is None else int(v.timestamp()) for v in table["last_reported"].to_pylist()]
+    assert sorted(v + 4 * 3600 for v in raw_lr if v >= common.MIN_VALID_EPOCH) == sorted(v for v in got_lr if v)
 
 
 def test_refuses_to_overwrite_v2_month(aws):
@@ -117,3 +121,34 @@ def test_backfill_station_info(aws):
     assert table["fetched_at"][0].as_py() == datetime(2019, 8, 1, 20, 47, 34, tzinfo=UTC)
     # Existing days are left alone.
     assert backfill.backfill_station_info()["skipped"] == ["2019-08-01"]
+
+
+def test_ny_wall_to_utc_is_dst_aware():
+    wall = pa.array([datetime(2018, 1, 10, 7), datetime(2018, 7, 10, 7)], pa.timestamp("ms")).cast(common.TS)
+    assert common.ny_wall_to_utc(wall).to_pylist() == [
+        datetime(2018, 1, 10, 12, tzinfo=UTC),
+        datetime(2018, 7, 10, 11, tzinfo=UTC),
+    ]
+
+
+def test_ec2_hours_are_rebucketed_to_utc_days(aws):
+    path = DATA / "station_status_2018_03_10_07.parquet"
+    n = pq.read_metadata(path).num_rows
+    # 22:00 EST on 03-09 is 03:00 UTC on 03-10.
+    put_file(aws, path, f"station_status/2018/03/09/22/{path.name}")
+    assert backfill.hourly_day(date(2018, 3, 9)) is None
+    table = backfill.hourly_day(date(2018, 3, 10))
+    assert table.num_rows == n
+    assert table["fetched_at"].unique().to_pylist() == [datetime(2018, 3, 10, 3, tzinfo=UTC)]
+
+
+def test_ec2_rows_overlapping_the_lambda_are_dropped(aws):
+    ec2 = DATA / "station_status_2018_03_10_07.parquet"
+    lam = DATA / "station_status_2019_08_05_14.parquet"
+    for hour in (13, 14, 17):  # EDT -> 17:00, 18:00, 21:00 UTC
+        put_file(aws, ec2, f"station_status/2019/08/01/{hour}/{ec2.name}")
+    put_file(aws, lam, f"station_status/2019/08/01/18/{lam.name}")  # Lambda, already UTC
+    table = backfill.hourly_day(date(2019, 8, 1))
+    hours = sorted({t.hour for t in table["fetched_at"].to_pylist()})
+    assert hours == [17, 18]
+    assert table.num_rows == pq.read_metadata(ec2).num_rows + pq.read_metadata(lam).num_rows

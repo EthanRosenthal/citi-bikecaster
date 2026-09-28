@@ -33,3 +33,4 @@ node_modules/
 backfill-*.jsonl
 *.parquet
 !tests/data/*.parquet
+dump/

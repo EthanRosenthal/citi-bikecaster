@@ -156,6 +156,12 @@ month of ~50M rows compresses to ~150 MB.
 
 ### Data quality notes
 
+- **Timezones before 2019-08:** the original EC2 poller, which ran until
+  2019-08-01, recorded its poll time and `last_reported` as New York
+  wall-clock time. Both are converted to true UTC, DST-aware. Its last ~3
+  hours overlapped the Lambda poller that replaced it, and those rows (78,678)
+  are dropped. In the fall-back hour, when clocks repeat 1:00–2:00, rows are
+  placed in the earlier (EDT) hour.
 - **Gaps:** 2017-07 is nearly empty and 2017-08 has no data. Otherwise there
   are ~720 snapshots per day.
 - **Hourly-only days:** 2019-08-01, 2019-10-05, 2020-11-25, 2021-12-07,
@@ -189,6 +195,26 @@ scripts/dump.sh duckdb citibike.parquet  # everything → one local parquet file
 The Athena version runs the saved query **dump station_status**. It writes to
 `s3://insulator-citi-bikecaster/v2/dumps/<timestamp>/year=YYYY/` and registers
 the dump as a table.
+
+### Kaggle dump (status joined to station info)
+
+```sh
+uv run scripts/dump_joined.py dump/kaggle-$(date +%F)   # ~2.5 h, ~21 GB, one file per year
+```
+
+Every `station_status` row is joined, with a DuckDB `ASOF JOIN`, to the most
+recent `station_info` snapshot for its station taken at or before its
+`fetched_at`. This is the format of the
+[Kaggle Citi Bike Stations dataset](https://www.kaggle.com/datasets/rosenthal/citi-bike-stations).
+
+- **Columns:** the same 18 columns as the 2021 Kaggle version, with native UTC
+  timestamps instead of epoch seconds. After them come `fetched_at`,
+  `source`, `legacy_id` and `station_information_fetched_at`.
+- **Rows:** every 2-minute snapshot is included. The 2021 version kept one row
+  per distinct `station_status_last_reported`.
+- **Order:** each yearly file is sorted by `station_id, fetched_at`.
+- **Missing station info:** station info starts 2019-08, so earlier rows have
+  `missing_station_information = true`.
 
 ## How it works
 

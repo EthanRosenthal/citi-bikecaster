@@ -14,10 +14,11 @@ hourly files and flags the day in the result.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 import statistics
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from bikecaster import common
 from bikecaster.common import logger
@@ -26,6 +27,14 @@ from bikecaster.compact import ROW_GROUP_SIZE, ZSTD_LEVEL, MonthWriter, _days_in
 TOLERANCE = 0.005
 RAW_PREFIX = "trash/station_status"
 HOURLY_PREFIX = "station_status"
+
+# Hourly files labelled before this came from the original EC2 poller, which
+# recorded both its poll time (the hour partition) and last_reported as
+# America/New_York wall-clock time. The Lambda poller took over at 18:52 UTC
+# on 2019-08-01 and recorded UTC. The EC2 data runs until 17:05 NYC time
+# (21:05 UTC), so its rows at or after this instant overlap the Lambda's and
+# are dropped.
+EC2_CUTOVER = datetime(2019, 8, 1, 18, tzinfo=UTC)
 
 
 def _day_path(day: date) -> str:
@@ -80,21 +89,53 @@ def _hour_of(key: str) -> datetime:
     return datetime(int(y), int(m), int(d), int(h), tzinfo=UTC)
 
 
-def hourly_day(keys: list[str]) -> pa.Table | None:
+def is_ec2_era(day: date) -> bool:
+    """Whether a UTC day can contain rows from the NYC-time EC2 poller. Its
+    last files (labelled up to 2019-08-01 17:00 local) land on 2019-08-01 UTC."""
+    return day <= EC2_CUTOVER.date()
+
+
+def hourly_day(day: date, keys: list[str] | None = None) -> pa.Table | None:
+    """Rows for UTC ``day`` from the hourly files, with fetched_at = the hour.
+
+    EC2-era files are labelled in NYC time, so the previous day's files are
+    read too, their times converted to UTC, and rows re-bucketed by UTC day.
+    """
+    keys = hourly_keys(day) if keys is None else keys
+    if is_ec2_era(day):
+        keys = hourly_keys(day - timedelta(days=1)) + keys
     if not keys:
         return None
-    tables = read_many(keys)
-    return pa.concat_tables(
-        common.normalize_status(t, "legacy_hourly", fetched_at=_hour_of(k))
-        for k, t in zip(keys, tables)
+    tables = []
+    for key, table in zip(keys, read_many(keys)):
+        hour = _hour_of(key)
+        table = common.normalize_status(table, "legacy_hourly", fetched_at=hour)
+        if hour < EC2_CUTOVER:
+            table = table.set_column(
+                0, "fetched_at", common.ny_wall_to_utc(table["fetched_at"])
+            )
+            idx = table.schema.get_field_index("last_reported")
+            table = table.set_column(
+                idx, "last_reported", common.ny_wall_to_utc(table["last_reported"])
+            )
+            table = table.filter(pc.less(table["fetched_at"], pa.scalar(EC2_CUTOVER, common.TS)))
+        tables.append(table)
+    table = pa.concat_tables(tables)
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    in_day = pc.and_(
+        pc.greater_equal(table["fetched_at"], pa.scalar(start, common.TS)),
+        pc.less(table["fetched_at"], pa.scalar(start + timedelta(days=1), common.TS)),
     )
+    table = table.filter(in_day)
+    return table if table.num_rows else None
 
 
 def build_day(day: date, source: str) -> tuple[pa.Table | None, dict]:
     info: dict = {"day": day.isoformat()}
     if source == "legacy_hourly":
-        table = hourly_day(hourly_keys(day))
+        table = hourly_day(day)
         info["chosen"] = "legacy_hourly" if table is not None else None
+        info["tz_shifted"] = is_ec2_era(day)
     elif source == "legacy_raw":
         table, raw_info = raw_day(day)
         info |= raw_info
@@ -111,8 +152,9 @@ def build_day(day: date, source: str) -> tuple[pa.Table | None, dict]:
         ):
             info["chosen"] = "legacy_raw"
         else:
-            table = hourly_day(keys)
+            table = hourly_day(day, keys)
             info["chosen"] = "legacy_hourly" if table is not None else None
+            info["tz_shifted"] = is_ec2_era(day)
             if table is not None and raw_rows:
                 info["flag"] = "raw/hourly row count mismatch"
     else:

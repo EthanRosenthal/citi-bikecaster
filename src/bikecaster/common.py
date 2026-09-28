@@ -255,6 +255,17 @@ def normalize_status(
     return pa.table(cols, schema=STATUS_SCHEMA)
 
 
+def ny_wall_to_utc(arr: pa.Array | pa.ChunkedArray) -> pa.ChunkedArray:
+    """Reinterpret timestamps holding America/New_York wall-clock values (but
+    labelled UTC) as NYC local time, returning true UTC. DST-aware; in the
+    repeated fall-back hour the earlier (EDT) instant is chosen."""
+    naive = arr.cast(pa.timestamp("ms"))
+    local = pc.assume_timezone(
+        naive, "America/New_York", ambiguous="earliest", nonexistent="earliest"
+    )
+    return local.cast(TS)
+
+
 def normalize_info(table: pa.Table, fetched_at: datetime) -> pa.Table:
     """Coerce a legacy (2019-08..2026-09) station_info file into INFO_SCHEMA."""
     n = table.num_rows

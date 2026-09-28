@@ -116,7 +116,9 @@ def cmd_verify(args):
             hourly = d.get("hourly_rows")
             if hourly is None:
                 continue
-            if d["chosen"] == "legacy_hourly" and d["rows"] != hourly:
+            # EC2-era days are re-bucketed from NYC to UTC, so they no longer
+            # line up with a single day's hourly files.
+            if d["chosen"] == "legacy_hourly" and not d.get("tz_shifted") and d["rows"] != hourly:
                 problems.append(f"{d['day']}: rows {d['rows']} != hourly {hourly}")
             if d["chosen"] == "legacy_raw":
                 raw = d["raw_rows"]
@@ -124,7 +126,7 @@ def cmd_verify(args):
                     problems.append(f"{d['day']}: raw rows {raw} vs hourly {hourly}")
                 if d["rows"] != raw - d.get("duplicates_dropped", 0):
                     problems.append(f"{d['day']}: wrote {d['rows']} rows, expected {raw} minus duplicates")
-            if d["chosen"] is None and hourly:
+            if d["chosen"] is None and hourly and not d.get("tz_shifted"):
                 problems.append(f"{d['day']}: no output but {hourly} hourly rows")
 
     _, db = names(args.stage)
