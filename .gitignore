@@ -34,3 +34,6 @@ backfill-*.jsonl
 *.parquet
 !tests/data/*.parquet
 dump/
+
+# Secrets
+.env
