@@ -1,0 +1,32 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-v2-raw-snapshots",
+      "Filter": {
+        "Prefix": "v2/raw/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 14
+      }
+    },
+    {
+      "ID": "expire-dev-stage",
+      "Filter": {
+        "Prefix": "dev/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 14
+      }
+    },
+    {
+      "ID": "abort-incomplete-multipart-uploads",
+      "Filter": {},
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}
