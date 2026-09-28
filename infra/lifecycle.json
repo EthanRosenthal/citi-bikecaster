@@ -21,6 +21,16 @@
       }
     },
     {
+      "ID": "expire-legacy-trash",
+      "Filter": {
+        "Prefix": "trash/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 1
+      }
+    },
+    {
       "ID": "abort-incomplete-multipart-uploads",
       "Filter": {},
       "Status": "Enabled",
