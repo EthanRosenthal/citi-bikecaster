@@ -11,6 +11,17 @@ sorted by station_id and fetched_at.
 
 Station info is only available from 2019-08. Earlier rows (and stations that
 never appear in station_info) have missing_station_information = true.
+
+Station ids changed from numbers to UUIDs in early 2023. The live feed's
+legacy_id maps each current station to its old numeric id, and that mapping
+is applied to every row:
+
+* legacy_id: the old numeric id (for pre-2023 rows, the station_id itself)
+* current_station_id: the station's id in the current feed
+
+so a station's full history can be grouped by either column. Stations that
+closed before the feed started reporting legacy_id (2026-09) have no
+current_station_id.
 """
 
 import argparse
@@ -46,7 +57,12 @@ COPY (
         -- Not in the 2021 Kaggle version:
         s.fetched_at,
         s.source,
-        s.legacy_id,
+        coalesce(
+            s.legacy_id,
+            fwd.legacy_id,
+            CASE WHEN regexp_full_match(s.station_id, '[0-9]+') THEN s.station_id END
+        ) AS legacy_id,
+        coalesce(fwd.station_id, rev.station_id) AS current_station_id,
         i.fetched_at AS station_information_fetched_at
     FROM (
         FROM read_parquet('{base}/station_status/*/*.parquet', hive_partitioning = true)
@@ -54,6 +70,9 @@ COPY (
     ) s
     ASOF LEFT JOIN station_info i
         ON s.station_id = i.station_id AND s.fetched_at >= i.fetched_at
+    -- Rows recorded under a current id / under an old numeric id.
+    LEFT JOIN id_map fwd ON s.station_id = fwd.station_id
+    LEFT JOIN id_map rev ON s.station_id = rev.legacy_id AND s.station_id <> rev.station_id
     ORDER BY s.station_id, s.fetched_at
 ) TO '{out}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 1000000)
 """
@@ -81,6 +100,21 @@ def main():
     con.sql("SET preserve_insertion_order = false")
     if args.threads:
         con.sql(f"SET threads = {args.threads}")
+    # Current station_id -> legacy_id, from the live feed (2026-09 onward).
+    con.sql(
+        f"""
+        CREATE TABLE id_map AS
+        SELECT station_id, arg_max(legacy_id, fetched_at) AS legacy_id
+        FROM read_parquet('{BASE}/station_status/*/*.parquet', hive_partitioning = true)
+        WHERE month >= '2026-09' AND legacy_id IS NOT NULL
+        GROUP BY station_id
+        """
+    )
+    dupes = con.sql(
+        "SELECT count(*) FROM (SELECT legacy_id FROM id_map GROUP BY 1 HAVING count(*) > 1)"
+    ).fetchone()[0]
+    if dupes:
+        raise RuntimeError(f"{dupes} legacy_ids map to more than one current station")
     # Small (~700k rows): load once.
     con.sql(
         f"CREATE TABLE station_info AS "
