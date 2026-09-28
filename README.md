@@ -209,7 +209,12 @@ recent `station_info` snapshot for its station taken at or before its
 
 - **Columns:** the same 18 columns as the 2021 Kaggle version, with native UTC
   timestamps instead of epoch seconds. After them come `fetched_at`,
-  `source`, `legacy_id` and `station_information_fetched_at`.
+  `source`, `legacy_id`, `current_station_id` and
+  `station_information_fetched_at`.
+- **Station ids:** `legacy_id` (the pre-2023 numeric id) and
+  `current_station_id` (the id in today's feed) are filled in across every
+  row of a station's history. They use the live feed's `legacy_id` mapping,
+  so one column groups a station's 2016–2026 series.
 - **Rows:** every 2-minute snapshot is included. The 2021 version kept one row
   per distinct `station_status_last_reported`.
 - **Order:** each yearly file is sorted by `station_id, fetched_at`.
